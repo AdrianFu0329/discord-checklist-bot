@@ -19,6 +19,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require('discord.js');
 const cron = require('node-cron');
 const http = require('http');
@@ -80,7 +83,8 @@ function buildChecklistPayload(state) {
         .map(
           (row) =>
             `**${row.label}**\n` +
-            row.items.map((i) => `${i.done ? '✅' : '⬜'} ${i.name}`).join('   ')
+            row.items.map((i) => `${i.done ? '✅' : '⬜'} ${i.name}`).join('   ') +
+            (row.driveLink ? `\n🔗 ${row.driveLink}` : '')
         )
         .join('\n\n')
     );
@@ -132,8 +136,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -----------------------------------------------------------
-    // 3. BUTTON CLICKS: toggle item, ping when that specific item
-    // (Edited or QC Approved) is checked for the first time.
+    // 3. BUTTON CLICKS
+    // "Edited" going from unchecked -> checked: show a modal asking
+    // for the Google Drive link before marking it done.
+    // Everything else (un-checking, or QC Approved): toggle directly.
     // -----------------------------------------------------------
     if (interaction.isButton() && interaction.customId.startsWith('chk_')) {
       const messageId = interaction.message.id;
@@ -146,17 +152,67 @@ client.on('interactionCreate', async (interaction) => {
       const [, rowIdxStr, itemIdxStr] = interaction.customId.split('_');
       const row = state.rows[Number(rowIdxStr)];
       const item = row.items[Number(itemIdxStr)];
+
+      if (item.name === 'Edited' && !item.done) {
+        // Ask for the Drive link before marking this done.
+        const modal = new ModalBuilder()
+          .setCustomId(`chkmodal_${messageId}_${rowIdxStr}_${itemIdxStr}`)
+          .setTitle(`${row.label} — Video Link`);
+
+        const linkInput = new TextInputBuilder()
+          .setCustomId('driveLink')
+          .setLabel('Google Drive link')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('https://drive.google.com/...')
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(linkInput));
+        await interaction.showModal(modal);
+        return;
+      }
+
       item.done = !item.done;
 
       if (item.done && item.pingId && !item.pinged) {
         item.pinged = true;
         const label = item.name === 'Edited' ? 'ready for QC' : 'approved';
-        await interaction.channel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ${label}. (${item.name})`);
+        const linkLine = row.driveLink ? `\n${row.driveLink}` : '';
+        await interaction.channel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ${label}. (${item.name})${linkLine}`);
       }
       // Un-checking doesn't re-ping if checked again later (by design, avoids spam).
       // To allow re-pinging, reset item.pinged = false when item.done is toggled off.
 
       await interaction.update(buildChecklistPayload(state));
+      return;
+    }
+
+    // -----------------------------------------------------------
+    // 4. MODAL SUBMIT: save the Drive link, mark "Edited" done, ping QC
+    // -----------------------------------------------------------
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('chkmodal_')) {
+      const [, messageId, rowIdxStr, itemIdxStr] = interaction.customId.split('_');
+      const state = checklistState.get(messageId);
+      if (!state) {
+        await interaction.reply({ content: 'This checklist expired — post a new one with /checklist.', ephemeral: true });
+        return;
+      }
+
+      const row = state.rows[Number(rowIdxStr)];
+      const item = row.items[Number(itemIdxStr)];
+      const link = interaction.fields.getTextInputValue('driveLink').trim();
+
+      row.driveLink = link;
+      item.done = true;
+
+      if (item.pingId && !item.pinged) {
+        item.pinged = true;
+        await interaction.channel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ready for QC.\n${link}`);
+      }
+
+      const message = await interaction.channel.messages.fetch(messageId);
+      await message.edit(buildChecklistPayload(state));
+      await interaction.reply({ content: `Marked **${row.label}** as edited.`, ephemeral: true });
+      return;
     }
   } catch (err) {
     // Discord interaction tokens expire after ~3s (code 10062 "Unknown

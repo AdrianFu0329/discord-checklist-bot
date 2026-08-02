@@ -36,25 +36,23 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 // Both take a role ID (prefixed with '&') or a user ID (no prefix).
 // ---------------------------------------------------------------
 const QC_BY_DAY = {
-  Monday: '&1533358634942074991',
-  Tuesday: '&333333333333333333',     // <-- replace with each day's QC role ID
-  Wednesday: '&444444444444444444',
-  Thursday: '&444444444444444444',
-  Friday: '&555555555555555555',
-  Saturday: '&555555555555555555',
-  Sunday: '&555555555555555555',
+  Monday: '&1533389121622376489',
+  Tuesday: '&1533389610762375228',
+  Wednesday: '&1533389665627930675',
+  Thursday: '&1533389719080271963',
+  Friday: '&1533389774864519279',
+  Saturday: '&1533389809878306947',
 };
 const EDITOR_BY_DAY = {
-  Monday: '&1533358503320752199',
-  Tuesday: null,                       // <-- replace with each day's Editor role ID, or leave null for no ping-back
-  Wednesday: null,
-  Thursday: null,
-  Friday: null,
-  Saturday: null,
-  Sunday: null,
+  Monday: '&1533389029058547785',
+  Tuesday: '&1533389275608125530',
+  Wednesday: '&1533389373826138153',
+  Thursday: '&1533389443283685486',
+  Friday: '&1533389491824365628',
+  Saturday: '&1533389549336789077',
 };
 
-const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function buildWeekConfig() {
   return DAYS_OF_WEEK.map((day) => ({

@@ -52,6 +52,11 @@ const EDITOR_BY_DAY = {
   Saturday: '&1533389549336789077',
 };
 
+// Optional: send ping messages (QC/Editor notifications) to a DIFFERENT
+// channel than the checklist itself. Leave as null to ping in the same
+// channel the checklist was posted in.
+const PING_CHANNEL_ID = '1533134289586229493'; // pings go here; checklist itself stays in whatever channel /checklist is run in
+
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function buildWeekConfig() {
@@ -70,6 +75,18 @@ const checklistState = new Map();
 
 function makeMention(pingId) {
   return pingId.startsWith('&') ? `<@&${pingId.slice(1)}>` : `<@${pingId}>`;
+}
+
+// Resolves where ping messages should go: PING_CHANNEL_ID if set,
+// otherwise the same channel the checklist itself is in.
+async function getPingChannel(fallbackChannel) {
+  if (!PING_CHANNEL_ID) return fallbackChannel;
+  try {
+    return await client.channels.fetch(PING_CHANNEL_ID);
+  } catch (err) {
+    console.error('Could not fetch PING_CHANNEL_ID, falling back to checklist channel:', err.message);
+    return fallbackChannel;
+  }
 }
 
 function buildChecklistPayload(state) {
@@ -121,6 +138,25 @@ function freshState() {
   };
 }
 
+// Pins a newly-posted checklist, and unpins any older checklist messages
+// in the same channel first so the pin list doesn't fill up over time.
+// Requires the bot to have the "Manage Messages" permission in that channel.
+async function pinChecklist(message) {
+  try {
+    const pinned = await message.channel.messages.fetchPinned();
+    const oldChecklists = pinned.filter(
+      (m) => m.author.id === client.user.id && m.embeds[0]?.title === '📋 Weekly Video Checklist'
+    );
+    for (const old of oldChecklists.values()) {
+      await old.unpin();
+    }
+    await message.pin();
+  } catch (err) {
+    // Most likely missing "Manage Messages" permission — log but don't crash.
+    console.error('Could not pin checklist:', err.message);
+  }
+}
+
 // ---------------------------------------------------------------
 // 2. SLASH COMMAND: /checklist  -> posts a fresh weekly checklist
 // ---------------------------------------------------------------
@@ -130,6 +166,7 @@ client.on('interactionCreate', async (interaction) => {
       const state = freshState();
       const reply = await interaction.reply({ ...buildChecklistPayload(state), fetchReply: true });
       checklistState.set(reply.id, state);
+      await pinChecklist(reply);
       return;
     }
 
@@ -175,7 +212,8 @@ client.on('interactionCreate', async (interaction) => {
         item.pinged = true;
         const label = item.name === 'Edited' ? 'ready for QC' : 'approved';
         const linkLine = row.driveLink ? `\n${row.driveLink}` : '';
-        await interaction.channel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ${label}. (${item.name})${linkLine}`);
+        const pingChannel = await getPingChannel(interaction.channel);
+        await pingChannel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ${label}. (${item.name})${linkLine}`);
       }
       // Un-checking doesn't re-ping if checked again later (by design, avoids spam).
       // To allow re-pinging, reset item.pinged = false when item.done is toggled off.
@@ -204,7 +242,8 @@ client.on('interactionCreate', async (interaction) => {
 
       if (item.pingId && !item.pinged) {
         item.pinged = true;
-        await interaction.channel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ready for QC.\n${link}`);
+        const pingChannel = await getPingChannel(interaction.channel);
+        await pingChannel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ready for QC.\n${link}`);
       }
 
       const message = await interaction.channel.messages.fetch(messageId);
@@ -233,6 +272,7 @@ function scheduleWeeklyReset(channelId) {
       const state = freshState();
       const msg = await channel.send(buildChecklistPayload(state));
       checklistState.set(msg.id, state);
+      await pinChecklist(msg);
     },
     { timezone: 'Asia/Kuala_Lumpur' }
   );

@@ -261,16 +261,20 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ---------------------------------------------------------------
-// 4. Auto-post a fresh checklist every Monday morning
-// (set your channel ID below and uncomment the call near the bottom)
+// 4. Auto-post a fresh checklist every Thursday morning, with an
+// @everyone ping so the whole server sees it.
 // ---------------------------------------------------------------
 function scheduleWeeklyReset(channelId) {
   cron.schedule(
-    '0 8 * * 1',
+    '0 8 * * 4', // Thursday, 8am (day-of-week: 0=Sun ... 4=Thu)
     async () => {
       const channel = await client.channels.fetch(channelId);
       const state = freshState();
-      const msg = await channel.send(buildChecklistPayload(state));
+      const msg = await channel.send({
+        content: '@everyone New weekly checklist is up!',
+        allowedMentions: { parse: ['everyone'] },
+        ...buildChecklistPayload(state),
+      });
       checklistState.set(msg.id, state);
       await pinChecklist(msg);
     },
@@ -316,7 +320,7 @@ function startKeepAlivePing() {
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-  // scheduleWeeklyReset('YOUR_CHANNEL_ID_HERE'); // uncomment to enable auto-reset
+  scheduleWeeklyReset('1533398389314551860'); // auto-posts every Thursday 8am
   startKeepAlivePing();
 });
 

@@ -1,16 +1,18 @@
 // Weekly Video Checklist Bot — discord.js v14
 // -----------------------------------------------------------------
-// One row per day of the week (Mon–Sun), one video per day.
+// One row per day (Mon–Sat), one video per day.
 // Flow per day:
-//   1. Editor clicks "Edited"      -> pings the QC role/person
-//   2. QC clicks "QC Approved"     -> day is locked, done
+//   1. Editor clicks "Edited"   -> modal asks for the Drive link
+//                               -> pings that day's QC role
+//   2. QC clicks "QC ✓" or "QC ✗" -> modal asks for notes
+//                               -> pings that day's Editor role with notes
+//   - "QC ✓" locks the day as done.
+//   - "QC ✗" reopens the day so the editor can resubmit.
 //
 // SETUP:
-//   npm install discord.js node-cron
-//   node register-commands.js   (registers /checklist)
+//   npm install
+//   node register-commands.js   (registers /checklist — only needed once)
 //   node index.js
-//
-// Set DISCORD_TOKEN, CLIENT_ID as env vars (or edit config.js).
 
 const {
   Client,
@@ -31,8 +33,8 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // ---------------------------------------------------------------
 // 1. CONFIG
-// QC_BY_DAY: who gets pinged when an editor marks THAT DAY "Edited".
-// EDITOR_BY_DAY: who gets pinged back when QC approves THAT DAY.
+// QC_BY_DAY: pinged when an editor marks THAT DAY "Edited".
+// EDITOR_BY_DAY: pinged when QC approves or declines THAT DAY.
 // Both take a role ID (prefixed with '&') or a user ID (no prefix).
 // ---------------------------------------------------------------
 const QC_BY_DAY = {
@@ -52,73 +54,103 @@ const EDITOR_BY_DAY = {
   Saturday: '&1533389549336789077',
 };
 
-// Optional: send ping messages (QC/Editor notifications) to a DIFFERENT
-// channel than the checklist itself. Leave as null to ping in the same
-// channel the checklist was posted in.
-const PING_CHANNEL_ID = '1533134289586229493'; // pings go here; checklist itself stays in whatever channel /checklist is run in
+// Send ping messages to a DIFFERENT channel than the checklist itself.
+// Set to null to ping in whatever channel the checklist lives in.
+const PING_CHANNEL_ID = '1533134289586229493';
+
+// Channel the weekly checklist auto-posts to.
+const AUTOPOST_CHANNEL_ID = '1533398389314551860';
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function buildWeekConfig() {
-  return DAYS_OF_WEEK.map((day) => ({
-    rowLabel: day,
-    items: [
-      { name: 'Edited', pingId: QC_BY_DAY[day] },
-      { name: 'QC Approved', pingId: EDITOR_BY_DAY[day] },
-    ],
-  }));
-}
+const CHECKLIST_TITLE = '📋 Weekly Video Checklist';
 
-// In-memory state: { [messageId]: { rows: [{ label, items: [{name, done, pingId, pinged}] }] } }
-// Swap this Map for a DB (SQLite/Redis) if you need it to survive restarts.
+// In-memory state, keyed by message ID. Lost on restart — swap for
+// SQLite/Redis if you need checklists to survive a redeploy.
 const checklistState = new Map();
 
+function freshState() {
+  return {
+    rows: DAYS_OF_WEEK.map((day) => ({
+      label: day,
+      qcPingId: QC_BY_DAY[day],
+      editorPingId: EDITOR_BY_DAY[day],
+      driveLink: null,
+      edited: false,
+      editedPinged: false,
+      qcStatus: null, // null | 'complete' | 'declined'
+      qcNotes: null,
+    })),
+  };
+}
+
 function makeMention(pingId) {
+  if (!pingId) return '';
   return pingId.startsWith('&') ? `<@&${pingId.slice(1)}>` : `<@${pingId}>`;
 }
 
-// Resolves where ping messages should go: PING_CHANNEL_ID if set,
-// otherwise the same channel the checklist itself is in.
+// Resolves where ping messages go: PING_CHANNEL_ID if set, otherwise
+// the same channel the checklist is in.
 async function getPingChannel(fallbackChannel) {
   if (!PING_CHANNEL_ID) return fallbackChannel;
   try {
     return await client.channels.fetch(PING_CHANNEL_ID);
   } catch (err) {
-    console.error('Could not fetch PING_CHANNEL_ID, falling back to checklist channel:', err.message);
+    console.error('Could not fetch PING_CHANNEL_ID, falling back:', err.message);
     return fallbackChannel;
   }
 }
 
+function statusLine(row) {
+  if (row.qcStatus === 'complete') return '✅ Edited   ✅ QC approved';
+  if (row.qcStatus === 'declined') return '⚠️ Changes requested — awaiting re-edit';
+  if (row.edited) return '✅ Edited   ⏳ Awaiting QC';
+  return '⬜ Not edited';
+}
+
 function buildChecklistPayload(state) {
   const embed = new EmbedBuilder()
-    .setTitle('📋 Weekly Video Checklist')
+    .setTitle(CHECKLIST_TITLE)
     .setColor(0x5865f2)
     .setDescription(
       state.rows
-        .map(
-          (row) =>
-            `**${row.label}**\n` +
-            row.items.map((i) => `${i.done ? '✅' : '⬜'} ${i.name}`).join('   ') +
-            (row.driveLink ? `\n🔗 ${row.driveLink}` : '')
-        )
+        .map((row) => {
+          let block = `**${row.label}**\n${statusLine(row)}`;
+          if (row.driveLink) block += `\n🔗 ${row.driveLink}`;
+          if (row.qcNotes) block += `\n📝 QC notes: ${row.qcNotes}`;
+          return block;
+        })
         .join('\n\n')
     );
 
-  // Discord allows max 5 action rows per message, and max 5 buttons per
-  // row. With 7 days x 2 buttons = 14 buttons, we can't do one row per
-  // day — so flatten all buttons and pack them 5-per-row instead.
+  // Discord caps a message at 5 action rows x 5 buttons. With 6 days x 3
+  // buttons = 18, we flatten everything and pack 5 per row (4 rows).
   const allButtons = [];
   state.rows.forEach((row, rowIdx) => {
-    const rowLocked = row.items.every((i) => i.done); // lock once fully approved
-    row.items.forEach((item, itemIdx) => {
-      allButtons.push(
-        new ButtonBuilder()
-          .setCustomId(`chk_${rowIdx}_${itemIdx}`)
-          .setLabel(`${row.label.slice(0, 3)}: ${item.name}`)
-          .setStyle(item.done ? ButtonStyle.Success : ButtonStyle.Secondary)
-          .setDisabled(rowLocked)
-      );
-    });
+    const locked = row.qcStatus === 'complete';
+    const short = row.label.slice(0, 3);
+
+    allButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`chk_${rowIdx}_edited`)
+        .setLabel(`${short}: Edited`)
+        .setStyle(row.edited ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(locked)
+    );
+    allButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`chk_${rowIdx}_pass`)
+        .setLabel(`${short}: QC ✓`)
+        .setStyle(row.qcStatus === 'complete' ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(locked || !row.edited)
+    );
+    allButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`chk_${rowIdx}_fail`)
+        .setLabel(`${short}: QC ✗`)
+        .setStyle(row.qcStatus === 'declined' ? ButtonStyle.Danger : ButtonStyle.Secondary)
+        .setDisabled(locked || !row.edited)
+    );
   });
 
   const components = [];
@@ -129,39 +161,27 @@ function buildChecklistPayload(state) {
   return { embeds: [embed], components };
 }
 
-function freshState() {
-  return {
-    rows: buildWeekConfig().map((r) => ({
-      label: r.rowLabel,
-      items: r.items.map((i) => ({ name: i.name, done: false, pingId: i.pingId, pinged: false })),
-    })),
-  };
-}
-
-// Pins a newly-posted checklist, and unpins any older checklist messages
-// in the same channel first so the pin list doesn't fill up over time.
-// Requires the bot to have the "Manage Messages" permission in that channel.
+// Pins a new checklist and unpins older ones so pins don't pile up.
+// Needs the "Manage Messages" permission in that channel.
 async function pinChecklist(message) {
   try {
     const pinned = await message.channel.messages.fetchPinned();
-    const oldChecklists = pinned.filter(
-      (m) => m.author.id === client.user.id && m.embeds[0]?.title === '📋 Weekly Video Checklist'
+    const old = pinned.filter(
+      (m) => m.author.id === client.user.id && m.embeds[0]?.title === CHECKLIST_TITLE
     );
-    for (const old of oldChecklists.values()) {
-      await old.unpin();
-    }
+    for (const m of old.values()) await m.unpin();
     await message.pin();
   } catch (err) {
-    // Most likely missing "Manage Messages" permission — log but don't crash.
     console.error('Could not pin checklist:', err.message);
   }
 }
 
 // ---------------------------------------------------------------
-// 2. SLASH COMMAND: /checklist  -> posts a fresh weekly checklist
+// 2. INTERACTIONS
 // ---------------------------------------------------------------
 client.on('interactionCreate', async (interaction) => {
   try {
+    // --- /checklist -> post a fresh weekly checklist ---
     if (interaction.isChatInputCommand() && interaction.commandName === 'checklist') {
       const state = freshState();
       const reply = await interaction.reply({ ...buildChecklistPayload(state), fetchReply: true });
@@ -170,127 +190,163 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // -----------------------------------------------------------
-    // 3. BUTTON CLICKS
-    // "Edited" going from unchecked -> checked: show a modal asking
-    // for the Google Drive link before marking it done.
-    // Everything else (un-checking, or QC Approved): toggle directly.
-    // -----------------------------------------------------------
+    // --- Button clicks: every button opens a modal first ---
     if (interaction.isButton() && interaction.customId.startsWith('chk_')) {
       const messageId = interaction.message.id;
       const state = checklistState.get(messageId);
       if (!state) {
-        await interaction.reply({ content: 'This checklist expired — post a new one with /checklist.', ephemeral: true });
+        await interaction.reply({
+          content: 'This checklist expired (the bot restarted) — post a new one with /checklist.',
+          ephemeral: true,
+        });
         return;
       }
 
-      const [, rowIdxStr, itemIdxStr] = interaction.customId.split('_');
+      const [, rowIdxStr, action] = interaction.customId.split('_');
       const row = state.rows[Number(rowIdxStr)];
-      const item = row.items[Number(itemIdxStr)];
 
-      if (item.name === 'Edited' && !item.done) {
-        // Ask for the Drive link before marking this done.
+      if (action === 'edited') {
+        // Toggling OFF an already-edited day needs no input.
+        if (row.edited) {
+          row.edited = false;
+          row.editedPinged = false;
+          await interaction.update(buildChecklistPayload(state));
+          return;
+        }
         const modal = new ModalBuilder()
-          .setCustomId(`chkmodal_${messageId}_${rowIdxStr}_${itemIdxStr}`)
+          .setCustomId(`mod_${messageId}_${rowIdxStr}_edited`)
           .setTitle(`${row.label} — Video Link`);
-
-        const linkInput = new TextInputBuilder()
-          .setCustomId('driveLink')
-          .setLabel('Google Drive link')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('https://drive.google.com/...')
-          .setRequired(true);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(linkInput));
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('driveLink')
+              .setLabel('Google Drive link')
+              .setStyle(TextInputStyle.Short)
+              .setPlaceholder('https://drive.google.com/...')
+              .setRequired(true)
+          )
+        );
         await interaction.showModal(modal);
         return;
       }
 
-      item.done = !item.done;
-
-      if (item.done && item.pingId && !item.pinged) {
-        item.pinged = true;
-        const label = item.name === 'Edited' ? 'ready for QC' : 'approved';
-        const linkLine = row.driveLink ? `\n${row.driveLink}` : '';
-        const pingChannel = await getPingChannel(interaction.channel);
-        await pingChannel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ${label}. (${item.name})${linkLine}`);
-      }
-      // Un-checking doesn't re-ping if checked again later (by design, avoids spam).
-      // To allow re-pinging, reset item.pinged = false when item.done is toggled off.
-
-      await interaction.update(buildChecklistPayload(state));
+      // QC pass / fail -> ask for notes.
+      const isPass = action === 'pass';
+      const modal = new ModalBuilder()
+        .setCustomId(`mod_${messageId}_${rowIdxStr}_${action}`)
+        .setTitle(`${row.label} — QC ${isPass ? 'Approve' : 'Decline'}`);
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('qcNotes')
+            .setLabel(isPass ? 'Notes (optional)' : 'What needs fixing?')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder(isPass ? 'Looks good, minor nitpicks...' : 'Describe the changes needed...')
+            .setRequired(!isPass) // notes required when declining
+        )
+      );
+      await interaction.showModal(modal);
       return;
     }
 
-    // -----------------------------------------------------------
-    // 4. MODAL SUBMIT: save the Drive link, mark "Edited" done, ping QC
-    // -----------------------------------------------------------
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('chkmodal_')) {
-      const [, messageId, rowIdxStr, itemIdxStr] = interaction.customId.split('_');
+    // --- Modal submissions ---
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('mod_')) {
+      const [, messageId, rowIdxStr, action] = interaction.customId.split('_');
       const state = checklistState.get(messageId);
       if (!state) {
-        await interaction.reply({ content: 'This checklist expired — post a new one with /checklist.', ephemeral: true });
+        await interaction.reply({
+          content: 'This checklist expired (the bot restarted) — post a new one with /checklist.',
+          ephemeral: true,
+        });
         return;
       }
 
       const row = state.rows[Number(rowIdxStr)];
-      const item = row.items[Number(itemIdxStr)];
-      const link = interaction.fields.getTextInputValue('driveLink').trim();
+      const pingChannel = await getPingChannel(interaction.channel);
+      let confirmation;
 
-      row.driveLink = link;
-      item.done = true;
+      if (action === 'edited') {
+        row.driveLink = interaction.fields.getTextInputValue('driveLink').trim();
+        row.edited = true;
+        // A fresh submission clears any previous QC decision.
+        row.qcStatus = null;
+        row.qcNotes = null;
 
-      if (item.pingId && !item.pinged) {
-        item.pinged = true;
-        const pingChannel = await getPingChannel(interaction.channel);
-        await pingChannel.send(`${makeMention(item.pingId)} — **${row.label}**'s video is ready for QC.\n${link}`);
+        await pingChannel.send(
+          `${makeMention(row.qcPingId)} — **${row.label}**'s video is ready for QC.\n${row.driveLink}`
+        );
+        confirmation = `Marked **${row.label}** as edited.`;
+      } else {
+        const notes = (interaction.fields.getTextInputValue('qcNotes') || '').trim();
+        row.qcNotes = notes || null;
+
+        if (action === 'pass') {
+          row.qcStatus = 'complete';
+          const noteLine = notes ? `\n📝 Notes: ${notes}` : '';
+          await pingChannel.send(
+            `${makeMention(row.editorPingId)} — **${row.label}**'s video passed QC. ✅${noteLine}`
+          );
+          confirmation = `Approved **${row.label}**.`;
+        } else {
+          row.qcStatus = 'declined';
+          // Reopen the day so the editor can resubmit.
+          row.edited = false;
+          row.editedPinged = false;
+          await pingChannel.send(
+            `${makeMention(row.editorPingId)} — **${row.label}**'s video needs changes. ❌\n📝 ${notes}`
+          );
+          confirmation = `Declined **${row.label}** and sent it back to the editor.`;
+        }
       }
 
       const message = await interaction.channel.messages.fetch(messageId);
       await message.edit(buildChecklistPayload(state));
-      await interaction.reply({ content: `Marked **${row.label}** as edited.`, ephemeral: true });
+      await interaction.reply({ content: confirmation, ephemeral: true });
       return;
     }
   } catch (err) {
-    // Discord interaction tokens expire after ~3s (code 10062 "Unknown
-    // interaction"). Log it instead of crashing the whole bot — this is
-    // usually caused by two bot instances running at once, or a slow
-    // response. Doesn't affect other users' checklists.
+    // Interaction tokens expire after ~3s (code 10062). Log rather than
+    // crash — usually caused by two bot instances running at once.
     console.error('Interaction error:', err.message);
   }
 });
 
 // ---------------------------------------------------------------
-// 4. Auto-post a fresh checklist every Thursday morning, with an
-// @everyone ping so the whole server sees it.
+// 3. Auto-post a fresh checklist every Wednesday 8am (Malaysia time),
+// with an @everyone ping. Needs "Mention Everyone" in that channel.
+// NOTE: cron only fires if the process is alive at that moment — it
+// does NOT catch up on missed runs after a restart or spin-down.
 // ---------------------------------------------------------------
 function scheduleWeeklyReset(channelId) {
   cron.schedule(
-    '0 8 * * 4', // Thursday, 8am (day-of-week: 0=Sun ... 4=Thu)
+    '0 8 * * 3', // Wednesday 8am (0=Sun, 3=Wed)
     async () => {
-      const channel = await client.channels.fetch(channelId);
-      const state = freshState();
-      const msg = await channel.send({
-        content: '@everyone New weekly checklist is up!',
-        allowedMentions: { parse: ['everyone'] },
-        ...buildChecklistPayload(state),
-      });
-      checklistState.set(msg.id, state);
-      await pinChecklist(msg);
+      console.log('[cron] Weekly checklist job firing...');
+      try {
+        const channel = await client.channels.fetch(channelId);
+        const state = freshState();
+        const msg = await channel.send({
+          content: '@everyone New weekly checklist is up!',
+          allowedMentions: { parse: ['everyone'] },
+          ...buildChecklistPayload(state),
+        });
+        checklistState.set(msg.id, state);
+        await pinChecklist(msg);
+        console.log('[cron] Weekly checklist posted.');
+      } catch (err) {
+        console.error('[cron] Failed to post weekly checklist:', err.message);
+      }
     },
     { timezone: 'Asia/Kuala_Lumpur' }
   );
+  console.log(`[cron] Weekly checklist scheduled: Wednesdays 08:00 Asia/Kuala_Lumpur -> channel ${channelId}`);
 }
 
 // ---------------------------------------------------------------
-// 5. KEEP-ALIVE (for Render's free tier)
-// Render's free Web Service sleeps after ~15 min with no incoming
-// HTTP traffic. This bot has no HTTP server on its own (it just
-// talks to Discord), so we spin up a bare-bones one Render can see,
-// then self-ping it every 14 minutes to keep the app awake.
-// Not needed if you're hosting elsewhere (e.g. Oracle Cloud) — it's
-// harmless either way, just skips the ping if RENDER_EXTERNAL_URL
-// isn't set.
+// 4. KEEP-ALIVE (Render free tier only)
+// Render's free Web Service sleeps after ~15 min without HTTP traffic.
+// Harmless if you host elsewhere — it skips the ping when
+// RENDER_EXTERNAL_URL isn't set.
 // ---------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
 
@@ -302,7 +358,6 @@ http
   .listen(PORT, () => console.log(`Keep-alive server listening on port ${PORT}`));
 
 function startKeepAlivePing() {
-  // Render sets RENDER_EXTERNAL_URL automatically for web services.
   const selfUrl = process.env.RENDER_EXTERNAL_URL;
   if (!selfUrl) {
     console.log('RENDER_EXTERNAL_URL not set — skipping self-ping (fine if not on Render).');
@@ -315,12 +370,13 @@ function startKeepAlivePing() {
     } catch (err) {
       console.error('Keep-alive ping failed:', err.message);
     }
-  }, 14 * 60 * 1000); // every 14 min — just under Render's 15-min idle timeout
+  }, 14 * 60 * 1000);
 }
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-  scheduleWeeklyReset('1533398389314551860'); // auto-posts every Thursday 8am
+  console.log(`Server time now: ${new Date().toString()}`);
+  scheduleWeeklyReset(AUTOPOST_CHANNEL_ID);
   startKeepAlivePing();
 });
 

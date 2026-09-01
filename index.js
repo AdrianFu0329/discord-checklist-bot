@@ -443,6 +443,16 @@ client.on("invalidated", () =>
   console.error("[client invalidated] token may be revoked"),
 );
 
+client.on("debug", (msg) => console.log("[debug]", msg));
+client.on("warn", (msg) => console.warn("[warn]", msg));
+
+setTimeout(() => {
+  if (!readyHandled)
+    console.error(
+      "STILL NOT READY after 30s — gateway handshake appears stuck.",
+    );
+}, 30000);
+
 console.log(
   `Attempting Discord login (token length: ${TOKEN ? TOKEN.length : "MISSING"})...`,
 );

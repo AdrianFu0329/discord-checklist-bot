@@ -9,10 +9,13 @@
 //   - "QC ✓" locks the day as done.
 //   - "QC ✗" reopens the day so the editor can resubmit.
 //
-// SETUP:
+// SETUP (local):
 //   npm install
-//   node register-commands.js   (registers /checklist — only needed once)
-//   node index.js
+//   cp .env.example .env         (fill in DISCORD_TOKEN and CLIENT_ID)
+//   npm run register             (registers /checklist — only needed once)
+//   npm start
+//
+// DEPLOY (Fly.io): see DEPLOY.md
 
 const dns = require("node:dns");
 const net = require("node:net");
@@ -408,20 +411,25 @@ function scheduleWeeklyReset(channelId) {
 
 // ---------------------------------------------------------------
 // 4. KEEP-ALIVE (Render free tier only)
-// Render's free Web Service sleeps after ~15 min without HTTP traffic.
-// Harmless if you host elsewhere — it skips the ping when
-// RENDER_EXTERNAL_URL isn't set.
+// A Discord bot is not a web service; this HTTP listener and the self-ping
+// below exist purely because Render's free Web Service sleeps after ~15 min
+// without inbound traffic. On Fly the process just stays up, so both are
+// skipped: no PORT is set there, and RENDER_EXTERNAL_URL is absent.
 // ---------------------------------------------------------------
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Checklist bot is alive");
-  })
-  .listen(PORT, () =>
-    console.log(`Keep-alive server listening on port ${PORT}`),
-  );
+if (PORT) {
+  http
+    .createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("Checklist bot is alive");
+    })
+    .listen(PORT, () =>
+      console.log(`Keep-alive server listening on port ${PORT}`),
+    );
+} else {
+  console.log("PORT not set — no HTTP listener needed (not on Render).");
+}
 
 function startKeepAlivePing() {
   const selfUrl = process.env.RENDER_EXTERNAL_URL;

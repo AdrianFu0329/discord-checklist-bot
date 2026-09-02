@@ -1,0 +1,21 @@
+# A Discord bot is a long-lived outbound gateway connection, not a web service.
+# It therefore declares no [http_service] and exposes no ports: nothing should
+# reach it from outside, and it must never be scaled to zero, or the gateway
+# connection dies and scheduled jobs stop firing.
+app = "discord-checklist-bot"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# One machine, always on. Two machines would mean two gateway sessions on one
+# token racing for the same interactions.
+[processes]
+  app = "node index.js"

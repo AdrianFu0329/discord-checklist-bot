@@ -24,6 +24,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  REST,
+  Routes,
 } = require("discord.js");
 const cron = require("node-cron");
 const http = require("http");
@@ -443,22 +445,79 @@ client.on("invalidated", () =>
   console.error("[client invalidated] token may be revoked"),
 );
 
-if (process.env.DISCORD_DEBUG === "1") {
-  client.on("debug", (msg) => console.log("[debug]", msg));
+// Gateway debug is loud, so it stays on only until the handshake completes —
+// that is the window where it actually tells us something. Set DISCORD_DEBUG=1
+// to keep it on permanently.
+// discord.js emits the raw token in its debug stream ("Provided token: ..."),
+// which would otherwise land in Render's logs verbatim.
+function scrub(msg) {
+  return TOKEN ? String(msg).split(TOKEN).join("[REDACTED]") : String(msg);
 }
-client.on("warn", (msg) => console.warn("[warn]", msg));
+
+client.on("debug", (msg) => {
+  if (!readyHandled || process.env.DISCORD_DEBUG === "1") {
+    console.log("[debug]", scrub(msg));
+  }
+});
+client.on("warn", (msg) => console.warn("[warn]", scrub(msg)));
+
+client.on("shardDisconnect", (event, id) =>
+  console.error(
+    `[shard ${id} disconnected] code=${event.code} reason=${event.reason || "(none)"}`,
+  ),
+);
+client.on("shardReconnecting", (id) =>
+  console.warn(`[shard ${id}] reconnecting...`),
+);
 
 setTimeout(() => {
-  if (!readyHandled)
-    console.error(
-      "STILL NOT READY after 30s — gateway handshake appears stuck.",
-    );
+  if (readyHandled) return;
+  console.error("STILL NOT READY after 30s — gateway handshake appears stuck.");
+  console.error(`  ws.status = ${client.ws?.status}`);
+  console.error(`  shards    = ${client.ws?.shards?.size ?? 0}`);
+  for (const shard of client.ws?.shards?.values() ?? []) {
+    console.error(`  shard ${shard.id}: status=${shard.status}`);
+  }
 }, 30000);
+
+// Preflight: hit the REST API before opening a socket. This separates "the
+// token is bad" from "the WebSocket cannot get out", and surfaces the identify
+// budget — a drained session_start_limit stalls the handshake with no error.
+async function preflight() {
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  try {
+    const me = await rest.get(Routes.user("@me"));
+    console.log(`[preflight] REST auth OK -> ${me.username} (${me.id})`);
+  } catch (err) {
+    console.error(`[preflight] REST auth FAILED: ${err.message}`);
+    console.error("  -> token is wrong/revoked, or outbound HTTPS is blocked.");
+    return;
+  }
+  try {
+    const gw = await rest.get(Routes.gatewayBot());
+    const l = gw.session_start_limit;
+    console.log(`[preflight] gateway url = ${gw.url}, shards = ${gw.shards}`);
+    console.log(
+      `[preflight] identifies remaining ${l.remaining}/${l.total}, ` +
+        `resets in ${Math.round(l.reset_after / 1000)}s, ` +
+        `max_concurrency ${l.max_concurrency}`,
+    );
+    if (l.remaining === 0) {
+      console.error(
+        "[preflight] identify budget EXHAUSTED — login will hang until reset.",
+      );
+    }
+  } catch (err) {
+    console.error(`[preflight] GET /gateway/bot FAILED: ${err.message}`);
+  }
+}
 
 console.log(
   `Attempting Discord login (token length: ${TOKEN ? TOKEN.length : "MISSING"})...`,
 );
-client.login(TOKEN).catch((err) => {
-  console.error("LOGIN FAILED:", err.message);
-  process.exit(1);
+preflight().finally(() => {
+  client.login(TOKEN).catch((err) => {
+    console.error("LOGIN FAILED:", err.message);
+    process.exit(1);
+  });
 });

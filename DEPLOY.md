@@ -1,64 +1,71 @@
-# Deploying to Fly.io
+# Deploying the checklist bot
 
-## Why the move
+## Why it moved off Render
 
 Render's free tier routes outbound traffic through IPs shared with every other
-free-tier tenant, and Discord rate-limits those IPs. The bot's logs showed the
-whole story: DNS fine, TCP to `discord.com:443` in 11ms, TLS fine — then
-`HTTP 429` in 19ms on the very first API call of a fresh process. discord.js
-honours the `retry_after`, so `GET /gateway/bot` never returned and no shard was
-ever spawned (`ws.status = 3`, `shards = 0`).
+free-tier tenant, and Discord rate-limits those IPs. The logs showed the whole
+chain: DNS fine, TCP to `discord.com:443` in 11ms, TLS fine — then `HTTP 429` in
+19ms on the first API call of a fresh process, from both undici and Node's own
+HTTP client. discord.js honours the `retry_after`, so `GET /gateway/bot` never
+returned and no shard was ever spawned (`ws.status = 3`, `shards = 0`).
 
-No code change fixes an IP-level block. Hence a different host.
+No code change routes around an IP-level block. The fix is an IP Discord is not
+rate-limiting — which means a host with a **dedicated** outbound address, not a
+shared NAT pool. Oracle Cloud's Always Free tier gives one at no cost.
 
-Fly also suits the workload better: a Discord bot holds a long-lived outbound
-gateway connection, so it is a persistent process, not a web service. The HTTP
-listener and self-ping in `index.js` only ever existed to stop Render sleeping,
-and both switch themselves off here.
+## 1. Create the VM
 
-## One-time setup
+In the Oracle Cloud console: **Compute → Instances → Create instance**.
 
-```sh
-brew install flyctl
-fly auth login          # opens a browser
-```
+- **Image:** Canonical Ubuntu 24.04
+- **Shape:** `VM.Standard.A1.Flex` (Ampere ARM, Always Free) — 1 OCPU and 6GB is
+  ample; the bot idles well under 100MB. `VM.Standard.E2.1.Micro` also works.
+- **SSH key:** upload your public key.
 
-`fly auth login` is interactive — run it yourself. In Claude Code you can prefix
-it with `!` to run it in-session.
+Confirm the shape is badged **Always Free eligible** before creating. If capacity
+is unavailable in your home region, retry later or pick another availability
+domain — a known annoyance of the free tier.
 
-## Launch
+No inbound ports are needed. The bot only dials out, so leave the default
+security list alone and do not open anything.
 
-From the repo root. `--no-deploy` matters: the app must have its secrets before
-it first starts, or it will boot, find no token and exit.
+## 2. Provision
 
-```sh
-fly launch --no-deploy --copy-config --name discord-checklist-bot --region sin
-```
-
-- `--copy-config` uses the committed `fly.toml` instead of generating one.
-- `--region sin` is Singapore, closest to the team's `Asia/Kuala_Lumpur` timezone.
-- If the app name is taken, pick another and update `app =` in `fly.toml`.
-
-## Secrets
-
-Never commit these; `fly secrets` stores them encrypted and restarts the app.
+SSH in, then:
 
 ```sh
-fly secrets set DISCORD_TOKEN=... CLIENT_ID=...
+curl -fsSL https://raw.githubusercontent.com/AdrianFu0329/discord-checklist-bot/main/deploy/setup.sh | sudo bash
 ```
 
-## Deploy
+That installs Node 22, creates an unprivileged `checklistbot` user, clones the
+repo to `/opt/checklist-bot`, installs dependencies from the lockfile, and
+registers a systemd service. It is idempotent — re-run it to deploy updates.
+
+It deliberately stops short of starting the bot, because credentials are still
+placeholders at that point.
+
+## 3. Credentials
 
 ```sh
-fly deploy
-fly logs
+sudo nano /etc/checklist-bot.env       # set DISCORD_TOKEN and CLIENT_ID
+sudo systemctl start checklist-bot
 ```
 
-## What a healthy start looks like
+The file is `root:checklistbot` `0640`, outside the repo, and never overwritten
+by re-running setup.
+
+## 4. Verify
+
+```sh
+journalctl -u checklist-bot -f
+```
+
+A healthy start:
 
 ```
 PORT not set — no HTTP listener needed (not on Render).
-[net] node v22.11.0 on linux/x64
+[net] node v22.x.x on linux/aarch64
+[net] tcp discord.com:443 -> OK in 11ms
 [net] tls discord.com:443 -> OK (TLSv1.3, authorized=true)
 [net] node https  GET /users/@me -> HTTP 200
 [net] undici fetch GET /users/@me -> HTTP 200
@@ -67,40 +74,45 @@ Logged in as <botname>#0000
 [cron] Weekly checklist scheduled: Saturdays 08:00 Asia/Kuala_Lumpur
 ```
 
-## If Fly's IP is rate-limited too
+`HTTP 200` on both probes is the line that matters — it is the exact check that
+returned 429 on Render.
 
-This is the one risk the migration does not eliminate: Fly NATs outbound traffic
-through shared egress addresses, and those can be rate-limited exactly like
-Render's. The diagnostics carry over, so the logs answer it immediately:
-
-- `HTTP 200` on both probes — you are fine.
-- `HTTP 429 ... VERDICT=cloudflare-ip-ban` — the shared egress IP is blocked.
-  Allocate a dedicated outbound address:
-  ```sh
-  fly machines egress-ip allocate
-  ```
-  Note this is a paid add-on, and inbound `fly ips allocate-v4` is a *different*
-  thing that does not change egress.
-- If that still fails, a small VPS (Hetzner, ~4 EUR/mo) gives a dedicated IP
-  outright and is the reliable end of the range.
-
-## Keeping it to one machine
-
-Two machines means two gateway sessions on one token, racing for the same button
-clicks. Check and correct with:
+## Operating it
 
 ```sh
-fly status
-fly scale count 1
+sudo systemctl status checklist-bot
+sudo systemctl restart checklist-bot
+journalctl -u checklist-bot -n 200 --no-pager
+journalctl -u checklist-bot -f
 ```
 
-## Slash commands
+Deploy a change: push to `main`, then re-run the setup command from step 2. It
+fetches, resets to `origin/main`, reinstalls dependencies and restarts.
 
-`/checklist` is registered globally against the application, not the host, so it
-survives the move. Only re-run `npm run register` if the command definition
-changes.
+Set `DISCORD_DEBUG=1` in `/etc/checklist-bot.env` to keep gateway debug logging
+on past startup. It is otherwise silenced once the bot is ready.
 
-## Render
+## Things worth knowing
 
-`render.yaml` is left in place as a rollback path and is excluded from the Docker
-image. Delete it once Fly is confirmed working.
+**Only ever run one instance.** Two processes on one token open two gateway
+sessions and race for the same button clicks. Stop the Render service before
+starting this one.
+
+**Checklist state is in memory.** A restart drops any open checklist; buttons on
+an old message then report that it expired. `Restart=always` keeps the bot up,
+but does not preserve state. Move `checklistState` to SQLite if that matters.
+
+**Cron does not catch up.** The Saturday 08:00 job only fires if the process is
+alive at that moment. A VM that stays up is precisely why this host suits the job
+better than a sleeping free-tier web service.
+
+**Oracle reclaims idle Always Free instances.** Ampere instances flagged as idle
+can be reclaimed. A bot holding a gateway connection generally stays above the
+threshold, but keep a backup of `/etc/checklist-bot.env` so a rebuild is quick.
+
+## Other hosts
+
+`Dockerfile`, `fly.toml` and `render.yaml` remain in the repo as alternative
+paths. Both Fly and Render free tiers NAT outbound through shared addresses, so
+each carries the same 429 risk that prompted this move; a small VPS (Hetzner,
+~4 EUR/mo) is the paid option with a dedicated IP.

@@ -1,0 +1,51 @@
+[Unit]
+Description=Discord Weekly Video Checklist Bot
+Documentation=https://github.com/AdrianFu0329/discord-checklist-bot
+After=network-online.target
+# The bot's first action is an outbound HTTPS call, so it needs real
+# connectivity, not merely a configured interface.
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=checklistbot
+Group=checklistbot
+WorkingDirectory=/opt/checklist-bot
+
+# Secrets live here, root-owned and 0640. Kept out of the unit file so this
+# file stays safe to commit.
+EnvironmentFile=/etc/checklist-bot.env
+
+ExecStart=/usr/bin/node index.js
+
+# Checklist state is in memory, so a restart drops any open checklist — but a
+# dead bot is worse. RestartSec avoids hammering Discord's identify budget if
+# it crash-loops.
+Restart=always
+RestartSec=10s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=checklist-bot
+
+# Hardening: the bot reads its own directory and makes outbound connections.
+# It needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/checklist-bot
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_UNIX is required too: glibc name resolution talks to local sockets
+# (nsswitch/systemd-resolved), and dropping it breaks DNS in a way that
+# looks exactly like the network fault we just spent this migration on.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

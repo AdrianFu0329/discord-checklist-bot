@@ -15,7 +15,7 @@
 //   npm run register             (registers /checklist — only needed once)
 //   npm start
 //
-// DEPLOY (Fly.io): see DEPLOY.md
+// DEPLOY (Oracle Cloud VM + systemd): see DEPLOY.md
 
 const dns = require("node:dns");
 const net = require("node:net");

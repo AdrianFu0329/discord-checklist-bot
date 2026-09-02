@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: discord-checklist-bot
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: NODE_VERSION
+        value: 20.11.1

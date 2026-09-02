@@ -2,6 +2,13 @@
   "name": "discord-checklist-bot",
   "version": "1.0.0",
   "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "register": "node register-commands.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",

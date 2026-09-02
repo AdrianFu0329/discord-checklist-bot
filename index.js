@@ -420,7 +420,7 @@ function startKeepAlivePing() {
         console.error("Keep-alive ping failed:", err.message);
       }
     },
-    14 * 60 * 1000,
+    10 * 60 * 1000,
   );
 }
 
@@ -443,7 +443,9 @@ client.on("invalidated", () =>
   console.error("[client invalidated] token may be revoked"),
 );
 
-client.on("debug", (msg) => console.log("[debug]", msg));
+if (process.env.DISCORD_DEBUG === "1") {
+  client.on("debug", (msg) => console.log("[debug]", msg));
+}
 client.on("warn", (msg) => console.warn("[warn]", msg));
 
 setTimeout(() => {

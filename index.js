@@ -551,6 +551,25 @@ function tlsProbe(host, ms = 8000) {
   });
 }
 
+// A 429 has two very different causes and two very different remedies:
+// Cloudflare banning the source IP (error 1015, an HTML body, no JSON) versus
+// Discord's own global rate limit (JSON with retry_after). Only the response
+// tells them apart, so surface the parts that do.
+function describe429(status, headers, body) {
+  if (status !== 429) return "";
+  const parts = [];
+  const h = (k) => headers[k] ?? headers[k.toLowerCase()];
+  if (h("retry-after")) parts.push(`retry-after=${h("retry-after")}s`);
+  if (h("x-ratelimit-scope")) parts.push(`scope=${h("x-ratelimit-scope")}`);
+  if (h("x-ratelimit-global")) parts.push("global=true");
+  if (h("cf-ray")) parts.push(`cf-ray=${h("cf-ray")}`);
+  if (h("server")) parts.push(`server=${h("server")}`);
+  const cloudflareBan = /error code: 1015|banned|Access denied/i.test(body);
+  parts.push(cloudflareBan ? "VERDICT=cloudflare-ip-ban" : "VERDICT=discord-ratelimit");
+  parts.push(`body=${JSON.stringify(body.slice(0, 200))}`);
+  return `\n      -> ${parts.join(" ")}`;
+}
+
 // Node's built-in HTTP client, deliberately NOT undici.
 function httpsProbe(ms = 10000) {
   return new Promise((resolve) => {
@@ -564,8 +583,17 @@ function httpsProbe(ms = 10000) {
         timeout: ms,
       },
       (res) => {
-        res.resume();
-        resolve(`HTTP ${res.statusCode} in ${Date.now() - started}ms`);
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => {
+          if (body.length < 400) body += c;
+        });
+        res.on("end", () =>
+          resolve(
+            `HTTP ${res.statusCode} in ${Date.now() - started}ms` +
+              describe429(res.statusCode, res.headers, body),
+          ),
+        );
       },
     );
     req.once("timeout", () => {
@@ -585,7 +613,11 @@ async function fetchProbe(ms = 10000) {
       headers: { Authorization: `Bot ${TOKEN}`, "User-Agent": "DiscordBot (probe, 1.0)" },
       signal: AbortSignal.timeout(ms),
     });
-    return `HTTP ${res.status} in ${Date.now() - started}ms`;
+    const body = await res.text().catch(() => "");
+    return (
+      `HTTP ${res.status} in ${Date.now() - started}ms` +
+      describe429(res.status, Object.fromEntries(res.headers), body)
+    );
   } catch (err) {
     return `FAILED after ${Date.now() - started}ms: ${err.message}`;
   }

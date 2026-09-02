@@ -31,7 +31,13 @@ security list alone and do not open anything.
 
 ## 2. Provision
 
-SSH in, then:
+SSH into the VM first — this runs **on the server**, not on your laptop:
+
+```sh
+ssh ubuntu@<your-oracle-vm-ip>
+```
+
+Then, on the VM:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AdrianFu0329/discord-checklist-bot/main/deploy/setup.sh | sudo bash

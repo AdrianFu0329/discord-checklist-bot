@@ -14,6 +14,23 @@ ENV_FILE="/etc/checklist-bot.env"
 SERVICE_USER="checklistbot"
 NODE_MAJOR=22
 
+# Checked before anything else: this script is for the Ubuntu VM, and the most
+# likely mistake is pasting the command into a local macOS terminal, where it
+# would otherwise fail several lines later on a bare "apt-get: not found".
+if [[ "$(uname -s)" != "Linux" ]] || ! command -v apt-get >/dev/null 2>&1; then
+  cat >&2 <<'EOM'
+ERROR: this script provisions an Ubuntu server; it does not run on this machine.
+
+Run it ON THE VM, not on your laptop:
+
+    ssh ubuntu@<your-oracle-vm-ip>
+    curl -fsSL https://raw.githubusercontent.com/AdrianFu0329/discord-checklist-bot/main/deploy/setup.sh | sudo bash
+
+To run the bot locally instead: npm install && cp .env.example .env && npm start
+EOM
+  exit 1
+fi
+
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root: sudo bash $0" >&2
   exit 1

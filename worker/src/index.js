@@ -56,12 +56,40 @@ function mintStateId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function hexToBytes(hex) {
+// Returns null rather than throwing on malformed input: the signature header is
+// attacker-controlled, so bad hex is an expected case, not an exception.
+function hexToBytes(hex, expectedBytes) {
+  if (typeof hex !== "string" || !/^[0-9a-fA-F]*$/.test(hex)) return null;
+  if (hex.length % 2 !== 0) return null;
+  if (expectedBytes !== undefined && hex.length !== expectedBytes * 2) return null;
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+// Ed25519 is exposed as "Ed25519" on current Workers runtimes and as
+// "NODE-ED25519" on older ones. Import is attempted separately from verify so a
+// verify failure is never mistaken for a runtime that needs the legacy name.
+async function importEd25519Key(keyBytes) {
+  try {
+    return {
+      key: await crypto.subtle.importKey("raw", keyBytes, { name: "Ed25519" }, false, ["verify"]),
+      algorithm: { name: "Ed25519" },
+    };
+  } catch {
+    return {
+      key: await crypto.subtle.importKey(
+        "raw",
+        keyBytes,
+        { name: "NODE-ED25519", namedCurve: "NODE-ED25519" },
+        false,
+        ["verify"],
+      ),
+      algorithm: { name: "NODE-ED25519" },
+    };
+  }
 }
 
 // Discord signs every request. An endpoint that skips this check can be driven
@@ -72,32 +100,20 @@ async function verifySignature(request, rawBody, publicKeyHex) {
   const timestamp = request.headers.get("x-signature-timestamp");
   if (!signature || !timestamp) return false;
 
+  // Ed25519 signatures are 64 bytes and public keys 32; anything else is
+  // rejected before it reaches WebCrypto, which would otherwise throw.
+  const sigBytes = hexToBytes(signature, 64);
+  const keyBytes = hexToBytes(publicKeyHex, 32);
+  if (!sigBytes || !keyBytes) return false;
+
   const message = new TextEncoder().encode(timestamp + rawBody);
-  let key;
   try {
-    key = await crypto.subtle.importKey(
-      "raw",
-      hexToBytes(publicKeyHex),
-      { name: "Ed25519" },
-      false,
-      ["verify"],
-    );
-    return await crypto.subtle.verify({ name: "Ed25519" }, key, hexToBytes(signature), message);
-  } catch {
-    // Older Workers runtimes only expose Ed25519 under the NODE-ED25519 name.
-    key = await crypto.subtle.importKey(
-      "raw",
-      hexToBytes(publicKeyHex),
-      { name: "NODE-ED25519", namedCurve: "NODE-ED25519" },
-      false,
-      ["verify"],
-    );
-    return await crypto.subtle.verify(
-      { name: "NODE-ED25519" },
-      key,
-      hexToBytes(signature),
-      message,
-    );
+    const { key, algorithm } = await importEd25519Key(keyBytes);
+    return await crypto.subtle.verify(algorithm, key, sigBytes, message);
+  } catch (err) {
+    // Any failure here means the request is not provably from Discord.
+    console.error("Signature verification error:", err.message);
+    return false;
   }
 }
 

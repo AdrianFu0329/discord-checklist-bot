@@ -6,7 +6,7 @@
 import assert from "node:assert";
 import worker from "../src/index.js";
 
-const PUBLIC_KEY_HEX = "".padEnd(64, "a"); // never actually verified against
+const PUBLIC_KEY_HEX = "".padEnd(64, "a"); // 32 bytes; verify() itself is stubbed
 
 // --- stubs ---------------------------------------------------------------
 const kv = new Map();
@@ -76,6 +76,40 @@ async function test(name, fn) {
 
 await test("rejects a bad signature with 401", async () => {
   const res = await post({ type: 1 }, { valid: false });
+  assert.strictEqual(res.status, 401);
+});
+
+await test("rejects a malformed signature with 401, not a 500", async () => {
+  // Discord's endpoint validation deliberately sends a bad signature and
+  // requires a rejection; a thrown error would surface as 500 and is not one.
+  const res = await worker.fetch(
+    new Request("https://bot.example/", {
+      method: "POST",
+      body: JSON.stringify({ type: 1 }),
+      headers: {
+        "x-signature-ed25519": "zzzz",
+        "x-signature-timestamp": "1700000000",
+      },
+    }),
+    env,
+    ctx,
+  );
+  assert.strictEqual(res.status, 401);
+});
+
+await test("rejects a wrong-length signature with 401", async () => {
+  const res = await worker.fetch(
+    new Request("https://bot.example/", {
+      method: "POST",
+      body: JSON.stringify({ type: 1 }),
+      headers: {
+        "x-signature-ed25519": "00".repeat(10),
+        "x-signature-timestamp": "1700000000",
+      },
+    }),
+    env,
+    ctx,
+  );
   assert.strictEqual(res.status, 401);
 });
 

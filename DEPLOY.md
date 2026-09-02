@@ -18,13 +18,24 @@ shared NAT pool. Oracle Cloud's Always Free tier gives one at no cost.
 In the Oracle Cloud console: **Compute → Instances → Create instance**.
 
 - **Image:** Canonical Ubuntu 24.04
-- **Shape:** `VM.Standard.A1.Flex` (Ampere ARM, Always Free) — 1 OCPU and 6GB is
-  ample; the bot idles well under 100MB. `VM.Standard.E2.1.Micro` also works.
+- **Shape:** `VM.Standard.E2.1.Micro` (AMD, Always Free). 1/8 OCPU and 1GB RAM
+  sounds thin but the bot idles under ~100MB and spends its life waiting on a
+  socket.
 - **SSH key:** upload your public key.
 
-Confirm the shape is badged **Always Free eligible** before creating. If capacity
-is unavailable in your home region, retry later or pick another availability
-domain — a known annoyance of the free tier.
+Confirm the shape is badged **Always Free eligible** before creating.
+
+The ARM shape `VM.Standard.A1.Flex` is the more powerful free option, but it is
+heavily oversubscribed and usually answers with:
+
+```
+Out of capacity for shape VM.Standard.A1.Flex in availability domain AD-1.
+```
+
+That is a fleet-wide shortage, not a misconfiguration. If you want ARM anyway,
+try each availability domain in turn and retry over a few days. Otherwise take
+the AMD micro shape — it is consistently available and more than sufficient
+here. Always Free covers two of them.
 
 No inbound ports are needed. The bot only dials out, so leave the default
 security list alone and do not open anything.

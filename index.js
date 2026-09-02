@@ -16,6 +16,8 @@
 
 const dns = require("node:dns");
 const net = require("node:net");
+const tls = require("node:tls");
+const https = require("node:https");
 
 // Some Render instances resolve discord.com to an AAAA record but have no
 // working IPv6 route out. The connection then hangs until the TCP timeout
@@ -526,6 +528,69 @@ function tcpProbe(host, port, ms = 8000) {
   });
 }
 
+// TCP connecting but HTTPS hanging means the stall is above the socket, so
+// these walk up the stack one layer at a time: TLS handshake, then Node's own
+// HTTP client, then undici (which backs global fetch and discord.js's REST).
+// Whichever is the first to hang is the layer at fault.
+function tlsProbe(host, ms = 8000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const sock = tls.connect({ host, port: 443, servername: host });
+    const done = (result) => {
+      sock.destroy();
+      resolve(result);
+    };
+    sock.setTimeout(ms);
+    sock.once("secureConnect", () =>
+      done(
+        `OK in ${Date.now() - started}ms (${sock.getProtocol()}, authorized=${sock.authorized})`,
+      ),
+    );
+    sock.once("timeout", () => done(`TIMED OUT after ${ms}ms`));
+    sock.once("error", (err) => done(`FAILED: ${err.message}`));
+  });
+}
+
+// Node's built-in HTTP client, deliberately NOT undici.
+function httpsProbe(ms = 10000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const req = https.request(
+      {
+        host: "discord.com",
+        path: "/api/v10/users/@me",
+        method: "GET",
+        headers: { Authorization: `Bot ${TOKEN}`, "User-Agent": "DiscordBot (probe, 1.0)" },
+        timeout: ms,
+      },
+      (res) => {
+        res.resume();
+        resolve(`HTTP ${res.statusCode} in ${Date.now() - started}ms`);
+      },
+    );
+    req.once("timeout", () => {
+      req.destroy();
+      resolve(`TIMED OUT after ${ms}ms`);
+    });
+    req.once("error", (err) => resolve(`FAILED: ${err.message}`));
+    req.end();
+  });
+}
+
+// global fetch === undici, the same stack discord.js's REST uses.
+async function fetchProbe(ms = 10000) {
+  const started = Date.now();
+  try {
+    const res = await fetch("https://discord.com/api/v10/users/@me", {
+      headers: { Authorization: `Bot ${TOKEN}`, "User-Agent": "DiscordBot (probe, 1.0)" },
+      signal: AbortSignal.timeout(ms),
+    });
+    return `HTTP ${res.status} in ${Date.now() - started}ms`;
+  } catch (err) {
+    return `FAILED after ${Date.now() - started}ms: ${err.message}`;
+  }
+}
+
 async function netDiagnostics() {
   console.log(`[net] node ${process.version} on ${process.platform}/${process.arch}`);
   for (const host of ["discord.com", "gateway.discord.gg"]) {
@@ -542,7 +607,10 @@ async function netDiagnostics() {
       console.log(`[net] ${host} AAAA -> ${err.message}`);
     }
     console.log(`[net] tcp ${host}:443 -> ${await tcpProbe(host, 443)}`);
+    console.log(`[net] tls ${host}:443 -> ${await tlsProbe(host)}`);
   }
+  console.log(`[net] node https  GET /users/@me -> ${await httpsProbe()}`);
+  console.log(`[net] undici fetch GET /users/@me -> ${await fetchProbe()}`);
 }
 
 // Preflight: hit the REST API. This separates "the token is bad" from "the
@@ -582,11 +650,17 @@ console.log(
 );
 // Diagnostics run alongside login, never in front of it — gating the login on
 // a probe means one hung probe takes the whole bot down with it.
-netDiagnostics()
+const diagnostics = netDiagnostics()
   .then(preflight)
   .catch((err) => console.error("[diagnostics] aborted:", err.message));
 
-client.login(TOKEN).catch((err) => {
+client.login(TOKEN).catch(async (err) => {
   console.error("LOGIN FAILED:", err.message);
+  // Let the probes finish first. Exiting here would kill the diagnostics
+  // exactly when a failed login makes them worth reading.
+  await Promise.race([
+    diagnostics,
+    new Promise((r) => setTimeout(r, 45000)),
+  ]);
   process.exit(1);
 });

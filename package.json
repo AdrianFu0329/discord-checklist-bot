@@ -7,7 +7,7 @@
     "register": "node register-commands.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "22.x"
   },
   "dependencies": {
     "discord.js": "^14.15.3",

@@ -10,12 +10,11 @@ PING_CHANNEL_ID = "1533134289586229493"
 # Channel the weekly checklist auto-posts to.
 AUTOPOST_CHANNEL_ID = "1533398389314551860"
 
-# Checklist state. Create with:
+# Checklist state. Created with:
 #   npx wrangler kv namespace create CHECKLIST
-# then paste the printed id below.
 [[kv_namespaces]]
 binding = "CHECKLIST"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "a4b82201727d4f59a763c6d9fc709507"
 
 # Saturday 08:00 Asia/Kuala_Lumpur is 00:00 UTC Saturday; Workers cron is UTC.
 [triggers]

@@ -14,6 +14,22 @@
 //   node register-commands.js   (registers /checklist — only needed once)
 //   node index.js
 
+const dns = require("node:dns");
+const net = require("node:net");
+
+// Some Render instances resolve discord.com to an AAAA record but have no
+// working IPv6 route out. The connection then hangs until the TCP timeout
+// instead of failing fast, which looks exactly like a stuck handshake.
+// Preferring A records sidesteps it. Set NO_IPV4_FIRST=1 to opt out.
+if (process.env.NO_IPV4_FIRST !== "1") {
+  try {
+    dns.setDefaultResultOrder("ipv4first");
+    console.log("[net] DNS result order set to ipv4first");
+  } catch (err) {
+    console.warn("[net] could not set ipv4first:", err.message);
+  }
+}
+
 const {
   Client,
   GatewayIntentBits,
@@ -480,13 +496,62 @@ setTimeout(() => {
   }
 }, 30000);
 
-// Preflight: hit the REST API before opening a socket. This separates "the
-// token is bad" from "the WebSocket cannot get out", and surfaces the identify
-// budget — a drained session_start_limit stalls the handshake with no error.
+// Every probe below is wrapped in this. A hung socket is the failure mode we
+// are chasing, so anything without a deadline just hangs with it.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+// Is the network itself usable? Separates DNS failure from a blocked or
+// black-holed TCP connect, which the REST error alone cannot distinguish.
+function tcpProbe(host, port, ms = 8000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const sock = net.connect({ host, port });
+    const done = (result) => {
+      sock.destroy();
+      resolve(result);
+    };
+    sock.setTimeout(ms);
+    sock.once("connect", () =>
+      done(`OK in ${Date.now() - started}ms via ${sock.remoteAddress}`),
+    );
+    sock.once("timeout", () => done(`TIMED OUT after ${ms}ms`));
+    sock.once("error", (err) => done(`FAILED: ${err.message}`));
+  });
+}
+
+async function netDiagnostics() {
+  console.log(`[net] node ${process.version} on ${process.platform}/${process.arch}`);
+  for (const host of ["discord.com", "gateway.discord.gg"]) {
+    try {
+      const v4 = await withTimeout(dns.promises.resolve4(host), 5000, "resolve4");
+      console.log(`[net] ${host} A    -> ${v4.join(", ")}`);
+    } catch (err) {
+      console.warn(`[net] ${host} A    -> ${err.message}`);
+    }
+    try {
+      const v6 = await withTimeout(dns.promises.resolve6(host), 5000, "resolve6");
+      console.log(`[net] ${host} AAAA -> ${v6.join(", ")}`);
+    } catch (err) {
+      console.log(`[net] ${host} AAAA -> ${err.message}`);
+    }
+    console.log(`[net] tcp ${host}:443 -> ${await tcpProbe(host, 443)}`);
+  }
+}
+
+// Preflight: hit the REST API. This separates "the token is bad" from "the
+// WebSocket cannot get out", and surfaces the identify budget — a drained
+// session_start_limit stalls the handshake with no error.
 async function preflight() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
   try {
-    const me = await rest.get(Routes.user("@me"));
+    const me = await withTimeout(rest.get(Routes.user("@me")), 15000, "GET /users/@me");
     console.log(`[preflight] REST auth OK -> ${me.username} (${me.id})`);
   } catch (err) {
     console.error(`[preflight] REST auth FAILED: ${err.message}`);
@@ -494,7 +559,7 @@ async function preflight() {
     return;
   }
   try {
-    const gw = await rest.get(Routes.gatewayBot());
+    const gw = await withTimeout(rest.get(Routes.gatewayBot()), 15000, "GET /gateway/bot");
     const l = gw.session_start_limit;
     console.log(`[preflight] gateway url = ${gw.url}, shards = ${gw.shards}`);
     console.log(
@@ -515,9 +580,13 @@ async function preflight() {
 console.log(
   `Attempting Discord login (token length: ${TOKEN ? TOKEN.length : "MISSING"})...`,
 );
-preflight().finally(() => {
-  client.login(TOKEN).catch((err) => {
-    console.error("LOGIN FAILED:", err.message);
-    process.exit(1);
-  });
+// Diagnostics run alongside login, never in front of it — gating the login on
+// a probe means one hung probe takes the whole bot down with it.
+netDiagnostics()
+  .then(preflight)
+  .catch((err) => console.error("[diagnostics] aborted:", err.message));
+
+client.login(TOKEN).catch((err) => {
+  console.error("LOGIN FAILED:", err.message);
+  process.exit(1);
 });

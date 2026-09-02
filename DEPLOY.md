@@ -129,7 +129,9 @@ threshold, but keep a backup of `/etc/checklist-bot.env` so a rebuild is quick.
 
 ## Other hosts
 
-`Dockerfile`, `fly.toml` and `render.yaml` remain in the repo as alternative
-paths. Both Fly and Render free tiers NAT outbound through shared addresses, so
-each carries the same 429 risk that prompted this move; a small VPS (Hetzner,
-~4 EUR/mo) is the paid option with a dedicated IP.
+The Render, Fly and Docker configs were removed once the bot moved to Cloudflare
+Workers; `git log` still has them. Render is where the 429 was hit, and Fly NATs
+outbound through shared addresses in the same way, so neither is a safe fallback
+for the gateway build. What this build needs is a **dedicated** outbound IP:
+an Oracle Always Free VM as above, a small VPS (Hetzner, ~4 EUR/mo), or a machine
+you already own.

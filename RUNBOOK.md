@@ -20,8 +20,8 @@ There are two builds in this repo. Only one runs at a time.
 | Weekly post | Cron Trigger | `node-cron`, only fires if alive |
 
 The gateway build is kept as a fallback and documented in [`DEPLOY.md`](DEPLOY.md).
-It requires a host whose outbound IP Discord is not rate-limiting — which is
-what took it down on Render (see §5).
+It requires a host with a **dedicated** outbound IP that Discord is not
+rate-limiting — a shared free-tier pool is what took it down on Render (see §5).
 
 **Only one may be active.** Setting an Interactions Endpoint URL stops Discord
 delivering over the gateway; running both means clicks land in only one.

@@ -384,7 +384,7 @@ client.on("interactionCreate", async (interaction) => {
 // ---------------------------------------------------------------
 function scheduleWeeklyReset(channelId) {
   cron.schedule(
-    "0 8 * * 6", // Saturday 8am (0=Sun, 6=Sat)
+    "0 0 * * 5", // Friday 00:00 (0=Sun, 5=Fri) — timezone applied below
     async () => {
       console.log("[cron] Weekly checklist job firing...");
       try {
@@ -405,7 +405,7 @@ function scheduleWeeklyReset(channelId) {
     { timezone: "Asia/Kuala_Lumpur" },
   );
   console.log(
-    `[cron] Weekly checklist scheduled: Saturdays 08:00 Asia/Kuala_Lumpur -> channel ${channelId}`,
+    `[cron] Weekly checklist scheduled: Fridays 00:00 Asia/Kuala_Lumpur -> channel ${channelId}`,
   );
 }
 

@@ -16,6 +16,7 @@ AUTOPOST_CHANNEL_ID = "1533398389314551860"
 binding = "CHECKLIST"
 id = "a4b82201727d4f59a763c6d9fc709507"
 
-# Saturday 08:00 Asia/Kuala_Lumpur is 00:00 UTC Saturday; Workers cron is UTC.
+# Workers cron is UTC. Friday 00:00 Asia/Kuala_Lumpur (UTC+8) is the preceding
+# Thursday at 16:00 UTC, hence a Thursday day-of-week here.
 [triggers]
-crons = ["0 0 * * 6"]
+crons = ["0 16 * * 4"]

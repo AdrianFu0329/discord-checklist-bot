@@ -366,8 +366,8 @@ export default {
     }
   },
 
-  // Cron trigger. Workers schedules in UTC, so Saturday 08:00 Asia/Kuala_Lumpur
-  // (UTC+8) is 00:00 UTC on Saturday. Unlike the gateway build's node-cron, this
+  // Cron trigger. Workers schedules in UTC, so Friday 00:00 Asia/Kuala_Lumpur
+  // (UTC+8) is 16:00 UTC on Thursday. Unlike the gateway build's node-cron, this
   // does not depend on a process happening to be alive at the time.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(postWeeklyChecklist(env));

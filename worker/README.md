@@ -94,8 +94,8 @@ npx wrangler tail     # live logs from the deployed Worker
 
 ## Cron
 
-`crons = ["0 0 * * 6"]` in `wrangler.toml`. Workers cron is **UTC**, and
-Saturday 08:00 Asia/Kuala_Lumpur (UTC+8) is Saturday 00:00 UTC. Adjust both
+`crons = ["0 16 * * 4"]` in `wrangler.toml`. Workers cron is **UTC**, and
+Friday 00:00 Asia/Kuala_Lumpur (UTC+8) is Thursday 16:00 UTC. Adjust both
 together if the schedule ever moves.
 
 ## Cost

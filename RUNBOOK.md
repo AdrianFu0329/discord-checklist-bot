@@ -200,9 +200,10 @@ weekly post and pinning. Look for `-> 403` in the logs.
 
 ### Weekly post didn't fire
 
-`crons = ["0 0 * * 6"]` in `wrangler.toml`. Workers cron is **UTC**; Saturday
-08:00 Asia/Kuala_Lumpur (UTC+8) is Saturday 00:00 UTC. Change both together.
-Verify the trigger is attached — `npx wrangler deploy` prints `schedule: 0 0 * * 6`.
+`crons = ["0 16 * * 4"]` in `wrangler.toml`. Workers cron is **UTC**; Friday
+00:00 Asia/Kuala_Lumpur (UTC+8) is the preceding **Thursday 16:00 UTC**, which is
+why the day-of-week reads 4. Verify the trigger is attached — `npx wrangler
+deploy` prints `schedule: 0 16 * * 4`.
 
 ### Deploy fails: `KV namespace '...' is not valid [code: 10042]`
 

@@ -88,7 +88,7 @@ PORT not set — no HTTP listener needed (not on Render).
 [net] undici fetch GET /users/@me -> HTTP 200
 [preflight] REST auth OK -> <botname> (<id>)
 Logged in as <botname>#0000
-[cron] Weekly checklist scheduled: Saturdays 08:00 Asia/Kuala_Lumpur
+[cron] Weekly checklist scheduled: Fridays 00:00 Asia/Kuala_Lumpur
 ```
 
 `HTTP 200` on both probes is the line that matters — it is the exact check that
@@ -119,7 +119,7 @@ starting this one.
 an old message then report that it expired. `Restart=always` keeps the bot up,
 but does not preserve state. Move `checklistState` to SQLite if that matters.
 
-**Cron does not catch up.** The Saturday 08:00 job only fires if the process is
+**Cron does not catch up.** The Friday 00:00 job only fires if the process is
 alive at that moment. A VM that stays up is precisely why this host suits the job
 better than a sleeping free-tier web service.
 

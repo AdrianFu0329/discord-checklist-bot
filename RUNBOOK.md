@@ -118,11 +118,20 @@ validation will fail.
 ### Is state being written?
 
 ```sh
-cd worker && npx wrangler kv key list --binding CHECKLIST
+cd worker && npx wrangler kv key list --binding CHECKLIST --remote
 ```
 
-Each posted checklist appears as `state:<id>` with an expiry ~90 days out. An
-empty list after someone has run `/checklist` means KV writes are failing.
+**`--remote` is not optional.** Without it wrangler lists *local* storage, which
+is almost always empty, and the result looks exactly like production KV having
+lost everything.
+
+Each posted checklist appears as `state:<id>` with an expiry ~90 days out. Note
+the expiry is 90 days from the **last interaction**, not from creation, because
+every button click rewrites the entry and resets its TTL — so these dates show
+when a checklist was last touched.
+
+An empty *remote* list after someone has run `/checklist` would mean KV writes
+are failing.
 
 ### What's deployed?
 
@@ -182,7 +191,7 @@ Discord probes with a valid and an invalid signature. Run both health checks in
 
 The state id in the button isn't in KV. Either the checklist is older than the
 90-day TTL, or the KV binding is wrong. Check `npx wrangler kv key list
---binding CHECKLIST` and confirm the id in `wrangler.toml` matches
+--binding CHECKLIST --remote` and confirm the id in `wrangler.toml` matches
 `npx wrangler kv namespace list`. Post a fresh `/checklist`.
 
 ### Nothing happens when a button is clicked

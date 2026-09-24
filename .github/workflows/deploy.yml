@@ -1,0 +1,49 @@
+name: Deploy Worker
+
+# Only the worker/ tree is deployed, so changes limited to the gateway fallback
+# or the docs do not trigger a deploy. workflow_dispatch allows a manual run,
+# which is the quickest way to redeploy after rotating a secret.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# A deploy that started earlier is cancelled when a newer commit lands, so the
+# Worker always ends up matching the tip of main rather than whichever run
+# happened to finish last.
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The suite caught two real defects while this bot was being built, so it
+      # gates the deploy rather than running alongside it.
+      - name: Test
+        run: npm test
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: worker

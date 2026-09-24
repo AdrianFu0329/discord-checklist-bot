@@ -268,11 +268,36 @@ Set `DISCORD_DEBUG=1` to keep gateway debug logging on past startup.
 
 ### Deploy a change
 
+Pushing to `main` deploys automatically — `.github/workflows/deploy.yml` runs
+the test suite and then `wrangler deploy`. It only fires for changes under
+`worker/`, so doc-only or gateway-fallback commits do not redeploy.
+
+A failing test blocks the deploy. Watch a run with:
+
+```sh
+gh run watch
+gh run list --workflow "Deploy Worker"
+```
+
+To deploy by hand — the quickest way to redeploy after rotating a secret, since
+that alone does not trigger a push:
+
 ```sh
 cd worker
 npm test
 npx wrangler deploy
 ```
+
+Or trigger the workflow without a commit:
+
+```sh
+gh workflow run "Deploy Worker"
+```
+
+The Action authenticates with the `CLOUDFLARE_API_TOKEN` repository secret
+(Cloudflare → My Profile → API Tokens → **Edit Cloudflare Workers** template).
+It is separate from the OAuth login `wrangler` uses locally, so rotating one
+does not affect the other.
 
 ### Rotate the bot token
 

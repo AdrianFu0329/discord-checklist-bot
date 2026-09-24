@@ -310,6 +310,14 @@ value, and Cloudflare shows an API token only once at creation, so the workflow
 matches the existing name rather than risking a re-issue. Renaming it means
 creating a fresh token and updating `deploy.yml` to match.
 
+**Create the token while signed into the right Cloudflare account.** The bot
+lives in *Adrianfwl@gmail.com's Account* (`ee2448326a3d10c278134c66aeb82535`,
+pinned as `account_id` in `wrangler.toml`), and that login has only that one
+account. A token minted under a different Cloudflare login is scoped elsewhere
+and fails the deploy with `Authentication error [code: 10000]` — the token is
+perfectly valid, just not for this account. Check the dashboard's account
+switcher before clicking Create.
+
 This token is separate from the OAuth login `wrangler` uses locally, so rotating
 one does not affect the other.
 

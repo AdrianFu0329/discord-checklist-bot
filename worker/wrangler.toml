@@ -1,5 +1,11 @@
 name = "discord-checklist-bot"
 main = "src/index.js"
+# Pinned so wrangler does not call /memberships to discover the account. A token
+# scoped to a single account (the "Edit Cloudflare Workers" template) is often
+# not permitted to enumerate memberships, which fails the deploy before it
+# starts. An account id is an identifier, not a credential — it grants nothing
+# without a token.
+account_id = "ee2448326a3d10c278134c66aeb82535"
 # Ed25519 in WebCrypto requires a reasonably recent compatibility date.
 compatibility_date = "2025-04-01"
 

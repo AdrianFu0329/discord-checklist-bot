@@ -45,5 +45,8 @@ jobs:
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Matches the repository secret as it is actually named. Note the
+          # spelling is "CLOUDFARE", missing the L — the token value cannot be
+          # read back out of GitHub to rename it, so the workflow matches it.
+          apiToken: ${{ secrets.CLOUDFARE_TOKEN }}
           workingDirectory: worker

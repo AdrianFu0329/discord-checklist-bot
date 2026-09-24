@@ -303,10 +303,15 @@ Or trigger the workflow without a commit:
 gh workflow run "Deploy Worker"
 ```
 
-The Action authenticates with the `CLOUDFLARE_API_TOKEN` repository secret
+The Action authenticates with the `CLOUDFARE_TOKEN` repository secret
 (Cloudflare → My Profile → API Tokens → **Edit Cloudflare Workers** template).
-It is separate from the OAuth login `wrangler` uses locally, so rotating one
-does not affect the other.
+The name is missing the "L" in Cloudflare; GitHub will not reveal a secret's
+value, and Cloudflare shows an API token only once at creation, so the workflow
+matches the existing name rather than risking a re-issue. Renaming it means
+creating a fresh token and updating `deploy.yml` to match.
+
+This token is separate from the OAuth login `wrangler` uses locally, so rotating
+one does not affect the other.
 
 ### Rotate the bot token
 

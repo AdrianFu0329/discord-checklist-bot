@@ -32,6 +32,9 @@ export const EDITOR_BY_DAY = {
   Saturday: "&1533389549336789077",
 };
 
+// Pinged when the weekly checklist auto-posts.
+export const AUTOPOST_PING_ID = "&1560477721950421073";
+
 export function freshState() {
   return {
     rows: DAYS_OF_WEEK.map((day) => ({

@@ -5,6 +5,7 @@
 
 import assert from "node:assert";
 import worker from "../src/index.js";
+import { AUTOPOST_PING_ID } from "../src/checklist.js";
 
 const PUBLIC_KEY_HEX = "".padEnd(64, "a"); // 32 bytes; verify() itself is stubbed
 
@@ -226,14 +227,15 @@ await test("unknown state id reports expiry rather than crashing", async () => {
   assert.match(body.data.content, /no longer tracked/);
 });
 
-await test("cron posts a fresh checklist with @everyone", async () => {
+await test("cron posts a fresh checklist pinging the autopost role", async () => {
   sent.length = 0;
   await worker.scheduled({}, env, ctx);
   await Promise.all(pending);
   const post0 = sent.find((s) => s.url.endsWith("/channels/888/messages"));
   assert.ok(post0, "posts to AUTOPOST_CHANNEL_ID");
-  assert.match(post0.body.content, /@everyone/);
-  assert.deepStrictEqual(post0.body.allowed_mentions, { parse: ["everyone"] });
+  assert.ok(post0.body.content.startsWith(`<@&${AUTOPOST_PING_ID.slice(1)}>`), "pings the role");
+  assert.doesNotMatch(post0.body.content, /@everyone/);
+  assert.deepStrictEqual(post0.body.allowed_mentions, { parse: ["roles"] });
   assert.ok(sent.some((s) => s.method === "PUT" && /\/pins\//.test(s.url)), "pins it");
 });
 

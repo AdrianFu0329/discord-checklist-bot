@@ -13,6 +13,7 @@ import {
   buildChecklistPayload,
   freshState,
   makeMention,
+  AUTOPOST_PING_ID,
   CHECKLIST_TITLE,
 } from "./checklist.js";
 
@@ -297,7 +298,8 @@ async function handleInteraction(interaction, env, ctx) {
 }
 
 // Posts the weekly checklist and pins it, unpinning any previous one so pins do
-// not pile up. Needs "Mention Everyone" and "Manage Messages" in the channel.
+// not pile up. Needs "Manage Messages" in the channel, plus "Mention Everyone"
+// unless the role is set to "Allow anyone to @mention this role".
 async function postWeeklyChecklist(env) {
   const channelId = env.AUTOPOST_CHANNEL_ID;
   const stateId = mintStateId();
@@ -305,8 +307,8 @@ async function postWeeklyChecklist(env) {
   await saveState(env, stateId, state);
 
   const res = await sendMessage(env, channelId, {
-    content: "@everyone New weekly checklist is up!",
-    allowed_mentions: { parse: ["everyone"] },
+    content: `${makeMention(AUTOPOST_PING_ID)} New weekly checklist is up!`,
+    allowed_mentions: { parse: ["roles"] },
     ...buildChecklistPayload(state, stateId),
   });
   if (!res.ok) return;

@@ -84,6 +84,9 @@ const PING_CHANNEL_ID = "1533134289586229493";
 // Channel the weekly checklist auto-posts to.
 const AUTOPOST_CHANNEL_ID = "1533398389314551860";
 
+// Pinged when the weekly checklist auto-posts.
+const AUTOPOST_PING_ID = "&1560477721950421073";
+
 const DAYS_OF_WEEK = [
   "Monday",
   "Tuesday",
@@ -378,7 +381,8 @@ client.on("interactionCreate", async (interaction) => {
 
 // ---------------------------------------------------------------
 // 3. Auto-post a fresh checklist every Wednesday 8am (Malaysia time),
-// with an @everyone ping. Needs "Mention Everyone" in that channel.
+// pinging AUTOPOST_PING_ID. Needs "Mention Everyone" in that channel
+// unless the role is set to "Allow anyone to @mention this role".
 // NOTE: cron only fires if the process is alive at that moment — it
 // does NOT catch up on missed runs after a restart or spin-down.
 // ---------------------------------------------------------------
@@ -391,8 +395,8 @@ function scheduleWeeklyReset(channelId) {
         const channel = await client.channels.fetch(channelId);
         const state = freshState();
         const msg = await channel.send({
-          content: "@everyone New weekly checklist is up!",
-          allowedMentions: { parse: ["everyone"] },
+          content: `${makeMention(AUTOPOST_PING_ID)} New weekly checklist is up!`,
+          allowedMentions: { parse: ["roles"] },
           ...buildChecklistPayload(state),
         });
         checklistState.set(msg.id, state);

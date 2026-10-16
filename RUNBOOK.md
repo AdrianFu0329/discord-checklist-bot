@@ -204,8 +204,10 @@ The state id in the button isn't in KV. Either the checklist is older than the
 ### Pings not appearing
 
 The bot needs **View Channel** and **Send Messages** in `PING_CHANNEL_ID`, and
-**Mention Everyone** plus **Manage Messages** in `AUTOPOST_CHANNEL_ID` for the
-weekly post and pinning. Look for `-> 403` in the logs.
+**Manage Messages** in `AUTOPOST_CHANNEL_ID` for the weekly post and pinning.
+The weekly post pings `AUTOPOST_PING_ID`; that only notifies anyone if the role
+has **Allow anyone to @mention this role** on, or the bot has **Mention
+Everyone** in that channel. Look for `-> 403` in the logs.
 
 ### Weekly post didn't fire
 
@@ -338,7 +340,8 @@ plain vars, not secrets — channel ids aren't sensitive.
 
 ### Change roles or days
 
-`worker/src/checklist.js` — `QC_BY_DAY`, `EDITOR_BY_DAY`, `DAYS_OF_WEEK`. Run
+`worker/src/checklist.js` — `QC_BY_DAY`, `EDITOR_BY_DAY`, `AUTOPOST_PING_ID`,
+`DAYS_OF_WEEK`. Run
 `npm test` afterwards; the suite checks the button layout still fits Discord's
 5×5 limit.
 
